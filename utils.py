@@ -1,8 +1,7 @@
 """ Utils para o bot.py.
 
-Definição das variáveis globais MODELOS_OPCOES e CAPACIDADES_OPCOES, com as opções a serem apresentadas ao usuário.
-Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores no MODELOS_OPCOES.
-Função checar_imei, que valida IMEI, retorna informações do dispositivo correspondente e atualiza CAPACIDADES_OPCOES.
+Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.
+Função checar_imei, que valida IMEI e retorna informações do dispositivo correspondente.
 Função gerar_link, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
 
 import requests
@@ -13,17 +12,12 @@ from playwright._impl._errors import TimeoutError
 from playwright.async_api import async_playwright
 from re import match
 
-# Dicionário com os modelos e suas cores disponíveis (com estoque)
-MODELOS_OPCOES = dict()
-# Set com as capacidades disponíveis para o IMEI informado
-CAPACIDADES_OPCOES = set()
 
-
-def filtrar_modelos() -> bool:
+def filtrar_modelos() -> dict:
     """Filtra os modelos e as cores disponíveis na loja através do dicionário MODELOS.
-    Atualiza o dicionário global MODELOS_OPCOES apenas com modelos e cores em estoque.
+    Retorna um dicionário apenas com modelos e suas cores em estoque.
     """
-    MODELOS_OPCOES.clear()
+    modelos_opcoes = dict()
 
     # Pega o HTML da página na loja de cada modelo
     for modelo, url in MODELOS.items():
@@ -32,7 +26,7 @@ def filtrar_modelos() -> bool:
             resposta.raise_for_status()
         except requests.exceptions.RequestException as e:
             print(f"Request falhou: {e}")
-            return False
+            return {}
 
         conteudo = BeautifulSoup(resposta.content, "html.parser")
 
@@ -41,7 +35,7 @@ def filtrar_modelos() -> bool:
             "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
         )
         if not div_cores:
-            return False
+            return {}
 
         # Lista para armazenar as cores disponíveis para o modelo
         cores = []
@@ -62,14 +56,15 @@ def filtrar_modelos() -> bool:
 
         # Se o modelo tem alguma cor disponível, ele aparece como uma opção para o usuário
         if cores:
-            MODELOS_OPCOES[modelo] = {"url": url, "cores": cores}
+            modelos_opcoes[modelo] = cores
 
-    return True
+    # Retorna dicionário, chaves são os modelos, valores são as listas de cores correspondentes
+    return modelos_opcoes
 
 
 def checar_imei(imei) -> dict:
     """Checa IMEI informado pelo usuário, retorna dicionário vazio caso inválido.
-    Atualiza o dicionário global CAPACIDADES_OPCOES e retorna informações do dispositivo se validado.
+    Retorna um dicionário com informações do dispositivo se validado.
     """
 
     url = f"https://shop.samsung.com/br/tradein/trocafone/checkImei/{imei}/true"
@@ -94,13 +89,17 @@ def checar_imei(imei) -> dict:
     if "is_imei_valid" in dados and not dados["is_imei_valid"]:
         return {}
 
-    # Atualiza dicionário global com as capacidades disponíveis do dispositivo
-    CAPACIDADES_OPCOES.clear()
+    # Cria e preenche set com as capacidades disponíveis do dispositivo
+    capacidades_opcoes = set()
     for produto in dados["products"]:
-        CAPACIDADES_OPCOES.add(produto["attributes"]["storage"]["label"])
+        capacidades_opcoes.add(produto["attributes"]["storage"]["label"])
 
-    # Retorna dicionário com a marca e o modelo do dispositivo
-    return {"marca": dados["brand"]["name"], "modelo": dados["model"]["name"]}
+    # Retorna dicionário com opções de capacidade, marca e modelo do dispositivo
+    return {
+        "capacidades_opcoes": capacidades_opcoes,
+        "marca": dados["brand"]["name"],
+        "modelo": dados["model"]["name"],
+    }
 
 
 async def gerar_link(url, cor, marca, modelo, capacidade, imei) -> dict:

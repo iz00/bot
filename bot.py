@@ -13,7 +13,7 @@ O link é gerado com automação de browser com Playwright, no Chromium.
 Uso:
 O bot solicita informações sobre um produto através de InlineKeyboard com múltiplos CallbackQueryHandlers 
 organizados em um ConversationHandler, e também solicita informações do dispositivo da Troca Smart.
-Com essas informações o Bot gera o link do carrinho com o produto e o desconto.
+Com essas informações o bot gera o link do carrinho com o produto e o desconto.
 Envie /start para informações de como utilizar.
 Envie /gerar para iniciar o processo de geração do link.
 Escolha um modelo, uma cor, informe o IMEI e escolha uma capacidade.
@@ -23,8 +23,6 @@ Pressione Ctrl-C na linha de comando para parar o bot.
 import logging
 from modelos import MODELOS
 from utils import (
-    MODELOS_OPCOES,
-    CAPACIDADES_OPCOES,
     filtrar_modelos,
     checar_imei,
     gerar_link,
@@ -69,12 +67,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def escolha_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia o ConversationHandler e solicita ao usuário escolher um modelo."""
     # Filtra os modelos que possuem estoque para apresentá-los ao usuário
-    if not filtrar_modelos():
+    context.user_data["modelos_opcoes"] = filtrar_modelos()
+
+    # Caso não sejam retornados modelos, informa ao usuário e termina o ConversationHandler
+    if not context.user_data["modelos_opcoes"]:
         await update.message.reply_text("Ocorreu um erro ao gerar a lista de modelos.")
+        return ConversationHandler.END
 
     keyboard = [
         [InlineKeyboardButton(modelo, callback_data=modelo)]
-        for modelo in MODELOS_OPCOES.keys()
+        for modelo in context.user_data["modelos_opcoes"].keys()
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -92,7 +94,9 @@ async def escolha_cor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     keyboard = [
         [InlineKeyboardButton(cor, callback_data=cor)]
-        for cor in sorted(MODELOS_OPCOES[context.user_data["modelo"]]["cores"])
+        for cor in sorted(
+            context.user_data["modelos_opcoes"][context.user_data["modelo"]]
+        )
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -151,7 +155,8 @@ async def escolha_capacidade(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [
             InlineKeyboardButton(capacidade, callback_data=capacidade)
             for capacidade in sorted(
-                CAPACIDADES_OPCOES, key=lambda x: CAPACIDADES.index(x)
+                dispositivo_imei["capacidades_opcoes"],
+                key=lambda x: CAPACIDADES.index(x),
             )
         ]
     ]
@@ -170,10 +175,9 @@ async def envia_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
 
-    modelo = context.user_data["modelo"]
+    # Pega url do modelo na loja com o dicionário MODELOS
+    url = MODELOS[context.user_data["modelo"]]
     cor = context.user_data["cor"]
-    # Pega url do modelo na loja com o dicionário MODELOS_OPCOES
-    url = MODELOS_OPCOES[modelo]["url"]
 
     imei = context.user_data["imei"]
     imei_marca = context.user_data["imei_marca"]
