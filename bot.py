@@ -67,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def escolha_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Inicia o ConversationHandler e solicita ao usuário escolher um modelo."""
     # Filtra os modelos que possuem estoque para apresentá-los ao usuário
-    context.user_data["modelos_opcoes"] = filtrar_modelos()
+    context.user_data["modelos_opcoes"] = await filtrar_modelos()
 
     # Caso não sejam retornados modelos, informa ao usuário e termina o ConversationHandler
     if not context.user_data["modelos_opcoes"]:
@@ -128,7 +128,7 @@ async def escolha_capacidade(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Salva o id da mensagem do usuário para ser excluída depois
     context.user_data["user_message_id"] = update.message.message_id
 
-    dispositivo_imei = checar_imei(context.user_data["imei"])
+    dispositivo_imei = await checar_imei(context.user_data["imei"])
 
     # Caso IMEI não é válido, informa ao usuário e termina o ConversationHandler
     if not dispositivo_imei:

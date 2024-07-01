@@ -4,7 +4,7 @@ Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com esto
 Função checar_imei, que valida IMEI e retorna informações do dispositivo correspondente.
 Função gerar_link, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
 
-import requests
+import aiohttp
 from modelos import MODELOS
 from bs4 import BeautifulSoup
 from json import loads
@@ -13,56 +13,59 @@ from playwright.async_api import async_playwright
 from re import match
 
 
-def filtrar_modelos() -> dict:
+async def filtrar_modelos() -> dict:
     """Filtra os modelos e as cores disponíveis na loja através do dicionário MODELOS.
     Retorna um dicionário apenas com modelos e suas cores em estoque.
     """
     modelos_opcoes = dict()
 
-    # Pega o HTML da página na loja de cada modelo
-    for modelo, url in MODELOS.items():
-        try:
-            resposta = requests.get(url)
-            resposta.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            print(f"Request falhou: {e}")
-            return {}
+    async with aiohttp.ClientSession() as sessao:
 
-        conteudo = BeautifulSoup(resposta.content, "html.parser")
+        # Pega o HTML da página na loja de cada modelo
+        for modelo, url in MODELOS.items():
+            try:
+                async with sessao.get(url) as resposta:
+                    resposta.raise_for_status()
+                    dados = await resposta.text()
+            except aiohttp.ClientError as e:
+                print(f"Request falhou: {e}")
+                return {}
 
-        # Encontra o div que contém as opções de cores
-        div_cores = conteudo.find("div", {"id": "selector-color"}).find(
-            "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
-        )
-        if not div_cores:
-            return {}
+            conteudo = BeautifulSoup(dados, "html.parser")
 
-        # Lista para armazenar as cores disponíveis para o modelo
-        cores = []
+            # Encontra o div que contém as opções de cores
+            div_cores = conteudo.find("div", {"id": "selector-color"}).find(
+                "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
+            )
+            if not div_cores:
+                return {}
 
-        # Encontra todos os botões das opções de cores
-        botoes_cores = div_cores.find_all("button")
+            # Lista para armazenar as cores disponíveis para o modelo
+            cores = []
 
-        for botao in botoes_cores:
-            # Se não existe estoque da cor, passe para a próxima opção
-            if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
-                continue
+            # Encontra todos os botões das opções de cores
+            botoes_cores = div_cores.find_all("button")
 
-            # Encontra o nome da cor e armazena na lista de cores
-            div_nome_cor = botao.find("div", class_="samsungbr-app-pdp-2-x-variantName")
-            if div_nome_cor:
-                cor = div_nome_cor.text.strip()
-                cores.append(cor)
+            for botao in botoes_cores:
+                # Se não existe estoque da cor, passe para a próxima opção
+                if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
+                    continue
 
-        # Se o modelo tem alguma cor disponível, ele aparece como uma opção para o usuário
-        if cores:
-            modelos_opcoes[modelo] = cores
+                # Encontra o nome da cor e armazena na lista de cores
+                div_nome_cor = botao.find("div", class_="samsungbr-app-pdp-2-x-variantName")
+                if div_nome_cor:
+                    cor = div_nome_cor.text.strip()
+                    cores.append(cor)
+
+            # Se o modelo tem alguma cor disponível, ele aparece como uma opção para o usuário
+            if cores:
+                modelos_opcoes[modelo] = cores
 
     # Retorna dicionário, chaves são os modelos, valores são as listas de cores correspondentes
     return modelos_opcoes
 
 
-def checar_imei(imei) -> dict:
+async def checar_imei(imei) -> dict:
     """Checa IMEI informado pelo usuário, retorna dicionário vazio caso inválido.
     Retorna um dicionário com informações do dispositivo se validado.
     """
@@ -76,14 +79,14 @@ def checar_imei(imei) -> dict:
     if not match(pattern=r"^\d{15}$", string=imei):
         return {}
 
-    try:
-        resposta = requests.get(url, headers=headers)
-        resposta.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Request falhou: {e}")
-        return {}
-
-    dados = resposta.json()
+    async with aiohttp.ClientSession() as sessao:
+        try:
+            async with sessao.get(url, headers=headers) as resposta:
+                resposta.raise_for_status()
+                dados = await resposta.json()
+        except aiohttp.ClientError as e:
+            print(f"Request falhou: {e}")
+            return {}
 
     # Caso IMEI não corresponde a um dispositivo ou dispositivo não está disponível para Troca Smart
     if "is_imei_valid" in dados and not dados["is_imei_valid"]:
