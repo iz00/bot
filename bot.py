@@ -1,41 +1,52 @@
 #!/usr/bin/env python
 
-""" Telegram bot que gera links para o carrinho da loja da Samsung com um produto escolhido e desconto da Troca Smart.
+"""
+Telegram bot que gera links para o carrinho da loja da Samsung com um produto escolhido e desconto da Troca Smart.
 
-O bot funciona através do ConversationHandler, que define a ordem de algumas callback functions.
-A ordem das funções, definida nas etapas (states), pede ao usuário escolher o modelo e a cor do produto escolhido,
+A comunicação do bot ocorre através de webhook com Flask.
+O bot funciona através do `ConversationHandler`, que define a ordem de algumas callback functions.
+A ordem das funções, definida nas etapas (`states`), pede ao usuário escolher o modelo e a cor do produto escolhido,
 o IMEI do dispositivo a ser utilizado na Troca Smart e sua capacidade de armazenamento.
 Os modelos e suas cores são filtrados com web scraping com BeautifulSoup,
 para serem apresentados nos botões para os usuários apenas se estão com estoque.
-Os botões funcionam através de InlineKeyboard.
+Os botões funcionam através de `InlineKeyboard`.
 O link é gerado com automação de browser com Playwright, no Chromium.
 
 Uso:
-O bot solicita informações sobre um produto através de InlineKeyboard com múltiplos CallbackQueryHandlers 
-organizados em um ConversationHandler, e também solicita informações do dispositivo da Troca Smart.
+O bot solicita informações sobre um produto através de `InlineKeyboard` com múltiplos `CallbackQueryHandlers` 
+organizados em um `ConversationHandler`, e também solicita informações do dispositivo da Troca Smart.
 Com essas informações o bot gera o link do carrinho com o produto e o desconto.
 Envie /start para informações de como utilizar.
 Envie /gerar para iniciar o processo de geração do link.
 Escolha um modelo, uma cor, informe o IMEI e escolha uma capacidade.
-Pressione Ctrl-C na linha de comando para parar o bot.
 """
 
-import logging
+import asyncio, logging, uvicorn
 from modelos import MODELOS
 from utils import (
     filtrar_modelos,
     checar_imei,
     gerar_link,
 )
+from asgiref.wsgi import WsgiToAsgi
+from dataclasses import dataclass
+from dotenv import load_dotenv
+from flask import Flask, Response, abort, make_response, request
+from http import HTTPStatus
+from os import getenv
 from re import escape
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    CallbackContext,
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
     ConversationHandler,
+    ExtBot,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -45,31 +56,59 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Leitura do token do bot, gerado pelo BotFather
-with open("token.txt", "r") as file:
-    TOKEN = file.read().strip()
+load_dotenv()
 
-# Definição das etapas do ConversationHandler
+# Definições para o webhook
+URL = getenv("URL")
+PORT = int(getenv("PORT"))
+
+# ID do chat do admin no Telegram e TOKEN do bot gerado pelo BotFather
+ADMIN_CHAT_ID = int(getenv("ADMIN_CHAT_ID"))
+TOKEN = getenv("TOKEN")
+
+# Definição das etapas do `ConversationHandler`
 MODELO, COR, IMEI, CAPACIDADE = range(4)
 
-# Todas as possibilidades de cores e de capacidades para as patterns nos CallbackQueryHandlers
+# Todas as possibilidades de cores e de capacidades para as patterns nos `CallbackQueryHandlers`
 CORES = ["Azul", "Azul Claro", "Azul Escuro", "Cinza", "Lavanda", "Rosa", "Verde"]
 CAPACIDADES = ["16GB", "32GB", "64GB", "128GB", "256GB", "512GB", "1TB"]
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Envia a mensagem quando o comando /start é enviado pelo usuário."""
+@dataclass
+class WebhookUpdate:
+    """Dataclass simples para fazer wrap em um tipo customizado de update."""
+
+    user_id: int
+    payload: str
+
+
+class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
+    """Classe CallbackContext customizada que faz `user_data` disponível para updates do tipo `WebhookUpdate`."""
+
+    @classmethod
+    def from_update(
+        cls,
+        update: object,
+        application: "Application",
+    ) -> "CustomContext":
+        if isinstance(update, WebhookUpdate):
+            return cls(application=application, user_id=update.user_id)
+        return super().from_update(update, application)
+
+
+async def start(update: Update, context: CustomContext) -> None:
+    """Envia a mensagem com instruções quando o comando /start é enviado pelo usuário."""
     await update.message.reply_text(
         "Use o comando /gerar para iniciar a geração do link do carrinho."
     )
 
 
-async def escolha_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Inicia o ConversationHandler e solicita ao usuário escolher um modelo."""
+async def escolha_modelo(update: Update, context: CustomContext) -> int:
+    """Inicia o `ConversationHandler` e solicita ao usuário escolher um modelo."""
     # Filtra os modelos que possuem estoque para apresentá-los ao usuário
     context.user_data["modelos_opcoes"] = await filtrar_modelos()
 
-    # Caso não sejam retornados modelos, informa ao usuário e termina o ConversationHandler
+    # Caso não sejam retornados modelos, informa ao usuário e termina o `ConversationHandler`
     if not context.user_data["modelos_opcoes"]:
         await update.message.reply_text("Ocorreu um erro ao gerar a lista de modelos.")
         return ConversationHandler.END
@@ -85,7 +124,7 @@ async def escolha_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return MODELO
 
 
-async def escolha_cor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def escolha_cor(update: Update, context: CustomContext) -> int:
     """Salva o modelo escolhido e solicita ao usuário escolher uma cor para o modelo."""
     query = update.callback_query
     await query.answer()
@@ -105,7 +144,7 @@ async def escolha_cor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return COR
 
 
-async def escolha_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def escolha_imei(update: Update, context: CustomContext) -> int:
     """Salva a cor escolhida e solicita ao usuário informar o IMEI do dispositivo a ser utilizado na Troca Smart."""
     query = update.callback_query
     await query.answer()
@@ -122,7 +161,7 @@ async def escolha_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return IMEI
 
 
-async def escolha_capacidade(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def escolha_capacidade(update: Update, context: CustomContext) -> int:
     """Salva o IMEI informado e solicita ao usuário escolher a capacidade do dispositivo a ser utilizado na Troca Smart."""
     context.user_data["imei"] = update.message.text.replace(" ", "")
     # Salva o id da mensagem do usuário para ser excluída depois
@@ -130,7 +169,7 @@ async def escolha_capacidade(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     dispositivo_imei = await checar_imei(context.user_data["imei"])
 
-    # Caso IMEI não é válido, informa ao usuário e termina o ConversationHandler
+    # Caso IMEI não é válido, informa ao usuário e termina o `ConversationHandler`
     if not dispositivo_imei:
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
@@ -170,12 +209,12 @@ async def escolha_capacidade(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return CAPACIDADE
 
 
-async def envia_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def envia_link(update: Update, context: CustomContext) -> int:
     """Gera e envia ao usuário o link para o carrinho com o modelo e o desconto da Troca Smart."""
     query = update.callback_query
     await query.answer()
 
-    # Pega url do modelo na loja com o dicionário MODELOS
+    # Pega url do modelo na loja com o dicionário `MODELOS`
     url = MODELOS[context.user_data["modelo"]]
     cor = context.user_data["cor"]
 
@@ -204,16 +243,42 @@ async def envia_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         text=link["erro"] if "erro" in link else f"Link gerado: {link['link']}",
     )
 
-    # Termina o ConversationHandler
+    # Termina o `ConversationHandler`
     return ConversationHandler.END
 
 
-def main() -> None:
-    """Começa o bot."""
-    # Cria a Application e passa o token do bot
-    application = Application.builder().token(TOKEN).build()
+async def webhook_update(update: WebhookUpdate, context: CustomContext) -> None:
+    """Lida com updates customizados."""
+    chat_member = await context.bot.get_chat_member(
+        chat_id=update.user_id, user_id=update.user_id
+    )
+    payloads = context.user_data.setdefault("payloads", [])
+    payloads.append(update.payload)
+    combined_payloads = "</code>\n• <code>".join(payloads)
+    text = (
+        f"O usuário {chat_member.user.mention_html()} enviou um novo payload. "
+        f"Até agora o usuário enviou os seguintes payloads: \n\n• <code>{combined_payloads}</code>"
+    )
+    await context.bot.send_message(
+        chat_id=ADMIN_CHAT_ID, text=text, parse_mode=ParseMode.HTML
+    )
 
-    # Setup do ConversationHandler com as etapas (states)
+
+async def main() -> None:
+    """Começa o bot. Cria a aplicação do bot e uma aplicação web para lidar com os requests."""
+    context_types = ContextTypes(context=CustomContext)
+
+    # Cria a `application` e passa o `TOKEN` do bot
+    # `Updater` é None porque o webhook customizado que irá lidar com os updates
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .updater(None)
+        .context_types(context_types)
+        .build()
+    )
+
+    # Setup do `ConversationHandler` com as etapas (`states`)
     # Cada handler é associado a uma interação do usuário em resposta às solicitações do bot
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("gerar", escolha_modelo)],
@@ -238,12 +303,71 @@ def main() -> None:
     # Responda ao comando start
     application.add_handler(CommandHandler("start", start))
 
-    # Adicionar ConversationHandler a application que vai ser utilizada para lidar com updates
+    # Adicionar `ConversationHandler` a `application` que vai ser utilizada para lidar com updates
     application.add_handler(conv_handler)
 
-    # Bot irá operar até usuário pressionar Ctrl + C
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.add_handler(TypeHandler(type=WebhookUpdate, callback=webhook_update))
+
+    # Passar as configurações do webhook para o Telegram
+    await application.bot.set_webhook(
+        url=f"{URL}/telegram", allowed_updates=Update.ALL_TYPES
+    )
+
+    # Configurar webserver
+    flask_app = Flask(__name__)
+
+    @flask_app.post("/telegram")  # type: ignore[misc]
+    async def telegram() -> Response:
+        """Lidar com updates vindos do Telegram colocando-os na `update_queue`."""
+        await application.update_queue.put(
+            Update.de_json(data=request.json, bot=application.bot)
+        )
+        return Response(status=HTTPStatus.OK)
+
+    @flask_app.route("/submitpayload", methods=["GET", "POST"])  # type: ignore[misc]
+    async def custom_updates() -> Response:
+        """
+        Lidar com updates do webhook também colocando-os na `update_queue`, se os parâmetros
+        requeridos foram passados corretamente.
+        """
+        try:
+            user_id = int(request.args["user_id"])
+            payload = request.args["payload"]
+        except KeyError:
+            abort(
+                HTTPStatus.BAD_REQUEST,
+                "Por favor passe ambos `user_id` e `payload` como parâmetros.",
+            )
+        except ValueError:
+            abort(HTTPStatus.BAD_REQUEST, "`user_id` deve ser uma string!")
+
+        await application.update_queue.put(
+            WebhookUpdate(user_id=user_id, payload=payload)
+        )
+        return Response(status=HTTPStatus.OK)
+
+    @flask_app.get("/healthcheck")  # type: ignore[misc]
+    async def health() -> Response:
+        """Para o endpoint health, responder apenas com uma mensagem de texto simples."""
+        response = make_response("O bot ainda está funcionando bem :)", HTTPStatus.OK)
+        response.mimetype = "text/plain"
+        return response
+
+    webserver = uvicorn.Server(
+        config=uvicorn.Config(
+            app=WsgiToAsgi(flask_app),
+            port=PORT,
+            use_colors=False,
+            host="0.0.0.0",
+        )
+    )
+
+    # Executar a application e o webserver juntos
+    async with application:
+        await application.start()
+        await webserver.serve()
+        await application.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

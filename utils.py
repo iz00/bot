@@ -1,7 +1,7 @@
 """ Utils para o bot.py.
 
-Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.
-Função checar_imei, que valida IMEI e retorna informações do dispositivo correspondente.
+Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.\n
+Função checar_imei, que valida IMEI e retorna informações do dispositivo correspondente.\n
 Função gerar_link, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
 
 import aiohttp
@@ -52,7 +52,9 @@ async def filtrar_modelos() -> dict:
                     continue
 
                 # Encontra o nome da cor e armazena na lista de cores
-                div_nome_cor = botao.find("div", class_="samsungbr-app-pdp-2-x-variantName")
+                div_nome_cor = botao.find(
+                    "div", class_="samsungbr-app-pdp-2-x-variantName"
+                )
                 if div_nome_cor:
                     cor = div_nome_cor.text.strip()
                     cores.append(cor)
