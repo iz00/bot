@@ -34,7 +34,7 @@ from flask import Flask, Response, abort, make_response, request
 from http import HTTPStatus
 from os import getenv
 from re import escape
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import ChatMember, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -98,17 +98,34 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
 
 
 def restringir_acesso(func):
-    """Restringir acesso aos comandos do bot apenas a usuários pertencentes ao grupo."""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+    """Restringir acesso aos comandos do bot apenas a usuários em determinado grupo."""
+
+    async def wrapper(
+        update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
+    ):
         user_id = update.effective_user.id
 
-        # Tenta pegar o `ChatMember` do usuário no grupo, se ocorrer erro, usuário não está no grupo
+        # Tenta pegar o `ChatMember` do usuário no grupo
         try:
-            await context.bot.get_chat_member(chat_id=GRUPO_ID, user_id=user_id)
+            membro = await context.bot.get_chat_member(
+                chat_id=GRUPO_ID, user_id=user_id
+            )
         except TelegramError:
-            await update.message.reply_text("Desculpe, você não tem permissão para usar este bot.")
+            pass
         else:
-            return await func(update, context, *args, **kwargs)
+            # Checa status do usuário no grupo
+            if membro.status in [
+                ChatMember.ADMINISTRATOR,
+                ChatMember.MEMBER,
+                ChatMember.OWNER,
+                ChatMember.RESTRICTED,
+            ]:
+                return await func(update, context, *args, **kwargs)
+
+        # Se usuário no grupo não foi encontrado (nunca esteve lá ou saiu)
+        await update.message.reply_text(
+            "Desculpe, você não tem permissão para usar este bot."
+        )
 
     return wrapper
 
@@ -193,7 +210,7 @@ async def escolha_capacidade(update: Update, context: CustomContext) -> int:
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=context.user_data["bot_message_id"],
-            text=f"IMEI {context.user_data['imei']} é inválido.\nInforme o IMEI do dispositivo a ser utilizado na Troca Smart."
+            text=f"IMEI {context.user_data['imei']} é inválido.\nInforme o IMEI do dispositivo a ser utilizado na Troca Smart.",
         )
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
