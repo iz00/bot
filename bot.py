@@ -101,7 +101,7 @@ def restringir_acesso(func):
     """Restringir acesso aos comandos do bot apenas a usuários em determinado grupo."""
 
     async def wrapper(
-        update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
+        update: Update, context: CustomContext, *args, **kwargs
     ):
         user_id = update.effective_user.id
 

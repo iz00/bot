@@ -1,4 +1,4 @@
-"""Definição do dicionário MODELOS, que armazena os modelos disponíveis para o bot.
+"""Definição do dicionário `MODELOS`, que armazena os modelos disponíveis para o bot.
 Cada chave corresponde ao nome do modelo que aparecerá ao usuário (não necessariamente o mesmo da loja).
 Cada valor corresponde ao link do modelo correspondente na Samsung Shop."""
 

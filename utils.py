@@ -1,8 +1,8 @@
 """ Utils para o bot.py.
 
-Função filtrar_modelos, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.\n
-Função checar_imei, que valida IMEI e retorna informações do dispositivo correspondente.\n
-Função gerar_link, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
+Função `filtrar_modelos`, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.\n
+Função `checar_imei`, que valida IMEI e retorna informações do dispositivo correspondente.\n
+Função `gerar_link`, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
 
 import aiohttp
 from modelos import MODELOS
@@ -14,7 +14,7 @@ from re import match
 
 
 async def filtrar_modelos() -> dict:
-    """Filtra os modelos e as cores disponíveis na loja através do dicionário MODELOS.
+    """Filtra os modelos e as cores disponíveis na loja através do dicionário `MODELOS`.
     Retorna um dicionário apenas com modelos e suas cores em estoque.
     """
     modelos_opcoes = dict()
