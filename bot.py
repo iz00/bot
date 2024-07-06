@@ -36,6 +36,7 @@ from os import getenv
 from re import escape
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackContext,
@@ -62,6 +63,9 @@ PORT = int(getenv("PORT"))
 # ID do chat do admin no Telegram e TOKEN do bot gerado pelo BotFather
 ADMIN_CHAT_ID = int(getenv("ADMIN_CHAT_ID"))
 TOKEN = getenv("TOKEN")
+
+# ID do grupo para restrição de acesso
+GRUPO_ID = getenv("GRUPO_ID")
 
 # Definição das etapas do `ConversationHandler`
 MODELO, COR, IMEI, CAPACIDADE = range(4)
@@ -93,6 +97,23 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
         return super().from_update(update, application)
 
 
+def restringir_acesso(func):
+    """Restringir acesso aos comandos do bot apenas a usuários pertencentes ao grupo."""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+
+        # Tenta pegar o `ChatMember` do usuário no grupo, se ocorrer erro, usuário não está no grupo
+        try:
+            await context.bot.get_chat_member(chat_id=GRUPO_ID, user_id=user_id)
+        except TelegramError:
+            await update.message.reply_text("Desculpe, você não tem permissão para usar este bot.")
+        else:
+            return await func(update, context, *args, **kwargs)
+
+    return wrapper
+
+
+@restringir_acesso
 async def start(update: Update, context: CustomContext) -> None:
     """Envia a mensagem com instruções quando o comando /start é enviado pelo usuário."""
     await update.message.reply_text(
@@ -100,6 +121,7 @@ async def start(update: Update, context: CustomContext) -> None:
     )
 
 
+@restringir_acesso
 async def escolha_modelo(update: Update, context: CustomContext) -> int:
     """Inicia o `ConversationHandler` e solicita ao usuário escolher um modelo."""
     # Filtra os modelos que possuem estoque para apresentá-los ao usuário
