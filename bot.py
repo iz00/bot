@@ -169,22 +169,19 @@ async def escolha_capacidade(update: Update, context: CustomContext) -> int:
 
     dispositivo_imei = await checar_imei(context.user_data["imei"])
 
-    # Caso IMEI não é válido, informa ao usuário e termina o `ConversationHandler`
-    if not dispositivo_imei:
-        await context.bot.delete_message(
+    # Caso IMEI não é válido, informa ao usuário e solicita um novo IMEI
+    while not dispositivo_imei:
+        await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=context.user_data["bot_message_id"],
+            text=f"IMEI {context.user_data['imei']} é inválido.\nInforme o IMEI do dispositivo a ser utilizado na Troca Smart."
         )
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
             message_id=context.user_data["user_message_id"],
         )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"IMEI {context.user_data['imei']} é inválido.",
-        )
 
-        return ConversationHandler.END
+        return IMEI
 
     # Caso IMEI é válido, salva a marca e o modelo do dispositivo correspondente
     context.user_data["imei_marca"] = dispositivo_imei["marca"]
