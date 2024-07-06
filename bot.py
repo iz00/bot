@@ -30,7 +30,6 @@ from utils import (
 )
 from asgiref.wsgi import WsgiToAsgi
 from dataclasses import dataclass
-from dotenv import load_dotenv
 from flask import Flask, Response, abort, make_response, request
 from http import HTTPStatus
 from os import getenv
@@ -55,8 +54,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 # Definições para o webhook
 URL = getenv("URL")
