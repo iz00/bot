@@ -14,7 +14,7 @@ from re import match
 
 
 async def filtrar_modelos() -> dict:
-    """Filtra os modelos e as cores disponíveis na loja através do dicionário `MODELOS`.
+    """Filtra os modelos e as cores disponíveis na loja através do dicionário MODELOS.
     Retorna um dicionário apenas com modelos e suas cores em estoque.
     """
     modelos_opcoes = dict()
@@ -33,31 +33,36 @@ async def filtrar_modelos() -> dict:
 
             conteudo = BeautifulSoup(dados, "html.parser")
 
-            # Encontra o div que contém as opções de cores
-            div_cores = conteudo.find("div", {"id": "selector-color"}).find(
-                "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
-            )
-            if not div_cores:
+            # Encontra o(s) div(s) com as opções de cores (alguns modelos possuem mais de um)
+            divs_cores = conteudo.find_all("div", {"id": "selector-color"})
+            if not divs_cores:
                 return {}
 
             # Lista para armazenar as cores disponíveis para o modelo
             cores = []
 
-            # Encontra todos os botões das opções de cores
-            botoes_cores = div_cores.find_all("button")
-
-            for botao in botoes_cores:
-                # Se não existe estoque da cor, passe para a próxima opção
-                if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
-                    continue
-
-                # Encontra o nome da cor e armazena na lista de cores
-                div_nome_cor = botao.find(
-                    "div", class_="samsungbr-app-pdp-2-x-variantName"
+            for div in divs_cores:
+                div_cores = div.find(
+                    "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
                 )
-                if div_nome_cor:
-                    cor = div_nome_cor.text.strip()
-                    cores.append(cor)
+                if not div_cores:
+                    return {}
+
+                # Encontra todos os botões das opções de cores
+                botoes_cores = div_cores.find_all("button")
+
+                for botao in botoes_cores:
+                    # Se não existe estoque da cor, passe para a próxima opção
+                    if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
+                        continue
+
+                    # Encontra o nome da cor e armazena na lista de cores
+                    div_nome_cor = botao.find(
+                        "div", class_="samsungbr-app-pdp-2-x-variantName"
+                    )
+                    if div_nome_cor:
+                        cor = div_nome_cor.text.strip()
+                        cores.append(cor)
 
             # Se o modelo tem alguma cor disponível, ele aparece como uma opção para o usuário
             if cores:

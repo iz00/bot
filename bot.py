@@ -70,8 +70,7 @@ GRUPO_ID = getenv("GRUPO_ID")
 # Definição das etapas do `ConversationHandler`
 MODELO, COR, IMEI, CAPACIDADE = range(4)
 
-# Todas as possibilidades de cores e de capacidades para as patterns nos `CallbackQueryHandlers`
-CORES = ["Azul", "Azul Claro", "Azul Escuro", "Cinza", "Lavanda", "Rosa", "Verde"]
+# Todas as possibilidades de  capacidades para a pattern no `CallbackQueryHandler`
 CAPACIDADES = ["16GB", "32GB", "64GB", "128GB", "256GB", "512GB", "1TB"]
 
 
@@ -100,9 +99,7 @@ class CustomContext(CallbackContext[ExtBot, dict, dict, dict]):
 def restringir_acesso(func):
     """Restringir acesso aos comandos do bot apenas a usuários em determinado grupo."""
 
-    async def wrapper(
-        update: Update, context: CustomContext, *args, **kwargs
-    ):
+    async def wrapper(update: Update, context: CustomContext, *args, **kwargs):
         user_id = update.effective_user.id
 
         # Tenta pegar o `ChatMember` do usuário no grupo
@@ -320,10 +317,7 @@ async def main() -> None:
                 CallbackQueryHandler(escolha_cor, pattern="^" + escape(modelo) + "$")
                 for modelo in MODELOS.keys()
             ],
-            COR: [
-                CallbackQueryHandler(escolha_imei, pattern="^" + cor + "$")
-                for cor in CORES
-            ],
+            COR: [CallbackQueryHandler(escolha_imei, pattern="^.*$")],
             IMEI: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_capacidade)],
             CAPACIDADE: [
                 CallbackQueryHandler(envia_link, pattern="^" + capacidade + "$")
