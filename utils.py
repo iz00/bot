@@ -5,7 +5,6 @@ Função `checar_imei`, que valida IMEI e retorna informações do dispositivo c
 Função `gerar_link`, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
 
 import aiohttp
-from modelos import MODELOS
 from bs4 import BeautifulSoup
 from json import loads
 from playwright._impl._errors import TimeoutError
@@ -13,63 +12,49 @@ from playwright.async_api import async_playwright
 from re import match
 
 
-async def filtrar_modelos() -> dict:
-    """Filtra os modelos e as cores disponíveis na loja através do dicionário MODELOS.
-    Retorna um dicionário apenas com modelos e suas cores em estoque.
-    """
-    modelos_opcoes = dict()
+async def cores_dispositivo(url) -> dict:
+
+    cores = list()
 
     async with aiohttp.ClientSession() as sessao:
+        try:
+            async with sessao.get(url) as resposta:
+                resposta.raise_for_status()
+                dados = await resposta.text()
+        except aiohttp.ClientError as e:
+            print(f"Request falhou: {e}")
+            return {"erro": "Página não encontrada"}
 
-        # Pega o HTML da página na loja de cada modelo
-        for modelo, url in MODELOS.items():
-            try:
-                async with sessao.get(url) as resposta:
-                    resposta.raise_for_status()
-                    dados = await resposta.text()
-            except aiohttp.ClientError as e:
-                print(f"Request falhou: {e}")
-                return {}
+        conteudo = BeautifulSoup(dados, "html.parser")
 
-            conteudo = BeautifulSoup(dados, "html.parser")
+        # Encontra o(s) div(s) com as opções de cores (alguns modelos possuem mais de um)
+        divs_cores = conteudo.find_all("div", {"id": "selector-color"})
 
-            # Encontra o(s) div(s) com as opções de cores (alguns modelos possuem mais de um)
-            divs_cores = conteudo.find_all("div", {"id": "selector-color"})
-            if not divs_cores:
-                return {}
+        for div_cores in divs_cores:
+            div_cores = div_cores.find(
+                "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
+            )
 
-            # Lista para armazenar as cores disponíveis para o modelo
-            cores = []
+            # Encontra todos os botões das opções de cores
+            botoes_cores = div_cores.find_all("button")
 
-            for div in divs_cores:
-                div_cores = div.find(
-                    "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
+            for botao in botoes_cores:
+                # Se não existe estoque da cor, passe para a próxima opção
+                if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
+                    continue
+
+                # Encontra o nome da cor e armazena na lista de cores
+                div_nome_cor = botao.find(
+                    "div", class_="samsungbr-app-pdp-2-x-variantName"
                 )
-                if not div_cores:
-                    return {}
+                if div_nome_cor:
+                    cor = div_nome_cor.text.strip()
+                    cores.append(cor)
 
-                # Encontra todos os botões das opções de cores
-                botoes_cores = div_cores.find_all("button")
+    if not cores:
+        return {"erro": "O produto escolhido não está disponível no momento"}
 
-                for botao in botoes_cores:
-                    # Se não existe estoque da cor, passe para a próxima opção
-                    if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
-                        continue
-
-                    # Encontra o nome da cor e armazena na lista de cores
-                    div_nome_cor = botao.find(
-                        "div", class_="samsungbr-app-pdp-2-x-variantName"
-                    )
-                    if div_nome_cor:
-                        cor = div_nome_cor.text.strip()
-                        cores.append(cor)
-
-            # Se o modelo tem alguma cor disponível, ele aparece como uma opção para o usuário
-            if cores:
-                modelos_opcoes[modelo] = cores
-
-    # Retorna dicionário, chaves são os modelos, valores são as listas de cores correspondentes
-    return modelos_opcoes
+    return {"cores": cores}
 
 
 async def checar_imei(imei) -> dict:
