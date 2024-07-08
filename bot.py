@@ -24,7 +24,7 @@ Escolha um modelo, uma cor, informe o IMEI e escolha uma capacidade.
 import asyncio, logging, uvicorn
 from modelos import MODELOS
 from utils import (
-    filtrar_modelos,
+    cores_dispositivo,
     checar_imei,
     gerar_link,
 )
@@ -36,7 +36,7 @@ from os import getenv
 from re import escape
 from telegram import ChatMember, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import TelegramError, BadRequest
 from telegram.ext import (
     Application,
     CallbackContext,
@@ -68,7 +68,7 @@ TOKEN = getenv("TOKEN")
 GRUPO_ID = getenv("GRUPO_ID")
 
 # Definição das etapas do `ConversationHandler`
-MODELO, COR, IMEI, CAPACIDADE = range(4)
+MODELO, LINK, COR, IMEI, CAPACIDADE = range(5)
 
 # Todas as possibilidades de  capacidades para a pattern no `CallbackQueryHandler`
 CAPACIDADES = ["16GB", "32GB", "64GB", "128GB", "256GB", "512GB", "1TB"]
@@ -138,41 +138,98 @@ async def start(update: Update, context: CustomContext) -> None:
 @restringir_acesso
 async def escolha_modelo(update: Update, context: CustomContext) -> int:
     """Inicia o `ConversationHandler` e solicita ao usuário escolher um modelo."""
-    # Filtra os modelos que possuem estoque para apresentá-los ao usuário
-    context.user_data["modelos_opcoes"] = await filtrar_modelos()
-
-    # Caso não sejam retornados modelos, informa ao usuário e termina o `ConversationHandler`
-    if not context.user_data["modelos_opcoes"]:
-        await update.message.reply_text("Ocorreu um erro ao gerar a lista de modelos.")
-        return ConversationHandler.END
-
     keyboard = [
-        [InlineKeyboardButton(modelo, callback_data=modelo)]
-        for modelo in context.user_data["modelos_opcoes"].keys()
+        *(
+            [InlineKeyboardButton(modelo, callback_data=modelo)]
+            for modelo in MODELOS.keys()
+        ),
+        [InlineKeyboardButton("Outro", callback_data="outro")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text("Escolha o modelo:", reply_markup=reply_markup)
+    message = await update.message.reply_text(
+        "Escolha o modelo:", reply_markup=reply_markup
+    )
+
+    # Salva o id da mensagem do bot para ser excluída depois
+    context.user_data["bot_message_id"] = message.message_id
 
     return MODELO
+
+
+async def escolha_link(update: Update, context: CustomContext) -> int:
+    """Solicita ao usuário informar o link do modelo na Samsung Shop."""
+    query = update.callback_query
+    await query.answer()
+
+    message = await query.edit_message_text(
+        disable_web_page_preview=True,
+        text="Informe o link do dispositivo na Samsung Shop.\nNo formato: https://shop.samsung.com/br/<modelo>/p",
+    )
+
+    # Salva o id da mensagem do bot para ser excluída depois
+    context.user_data["bot_message_id"] = message.message_id
+
+    return LINK
 
 
 async def escolha_cor(update: Update, context: CustomContext) -> int:
     """Salva o modelo escolhido e solicita ao usuário escolher uma cor para o modelo."""
     query = update.callback_query
-    await query.answer()
 
-    context.user_data["modelo"] = query.data
+    if query:
+        await query.answer()
+        context.user_data["url"] = MODELOS[query.data]
+    else:
+        context.user_data["url"] = update.message.text.replace(" ", "")
+        await context.bot.delete_message(
+            chat_id=update.effective_chat.id,
+            message_id=update.message.message_id,
+        )
+
+    dispositivo = await cores_dispositivo(context.user_data["url"])
+
+    while "erro" in dispositivo:
+        keyboard = [
+            *(
+                [InlineKeyboardButton(modelo, callback_data=modelo)]
+                for modelo in MODELOS.keys()
+            ),
+            [InlineKeyboardButton("Outro", callback_data="outro")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        try:
+            message = await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=context.user_data["bot_message_id"],
+                text=f"{dispositivo['erro']}.\nEscolha o modelo:",
+                reply_markup=reply_markup,
+            )
+        except BadRequest:
+            pass
+        else:
+            context.user_data["bot_message_id"] = message.message_id
+
+        return MODELO
+
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data["bot_message_id"],
+    )
 
     keyboard = [
         [InlineKeyboardButton(cor, callback_data=cor)]
-        for cor in sorted(
-            context.user_data["modelos_opcoes"][context.user_data["modelo"]]
-        )
+        for cor in sorted(dispositivo["cores"])
     ]
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text("Escolha a cor:", reply_markup=reply_markup)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Escolha a cor:",
+        reply_markup=reply_markup,
+    )
 
     return COR
 
@@ -244,8 +301,7 @@ async def envia_link(update: Update, context: CustomContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    # Pega url do modelo na loja com o dicionário `MODELOS`
-    url = MODELOS[context.user_data["modelo"]]
+    url = context.user_data["url"]
     cor = context.user_data["cor"]
 
     imei = context.user_data["imei"]
@@ -314,9 +370,15 @@ async def main() -> None:
         entry_points=[CommandHandler("gerar", escolha_modelo)],
         states={
             MODELO: [
-                CallbackQueryHandler(escolha_cor, pattern="^" + escape(modelo) + "$")
-                for modelo in MODELOS.keys()
+                *(
+                    CallbackQueryHandler(
+                        escolha_cor, pattern="^" + escape(modelo) + "$"
+                    )
+                    for modelo in MODELOS.keys()
+                ),
+                CallbackQueryHandler(escolha_link, pattern="^outro$"),
             ],
+            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_cor)],
             COR: [CallbackQueryHandler(escolha_imei, pattern="^.*$")],
             IMEI: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_capacidade)],
             CAPACIDADE: [
