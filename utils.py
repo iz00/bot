@@ -1,20 +1,19 @@
-""" Utils para o bot.py.
+""" Utils para o bot.py."""
 
-Função `filtrar_modelos`, que usa BeautifulSoup para filtrar os modelos com estoque e suas cores.\n
-Função `checar_imei`, que valida IMEI e retorna informações do dispositivo correspondente.\n
-Função `gerar_link`, que usa Playwright para gerar link do carrinho na loja com o produto e o desconto."""
-
-import aiohttp
+import aiohttp, re
 from bs4 import BeautifulSoup
-from json import loads
-from playwright._impl._errors import TimeoutError
-from playwright.async_api import async_playwright
-from re import match
 
 
-async def cores_dispositivo(url) -> dict:
+async def informacoes_modelo(url):
+    informacoes = dict()
 
-    cores = list()
+    if not re.compile(r"^https://shop\.samsung\.com/br/.+/p.*").match(url):
+        return {"erro": "Formato de URL inválido"}
+
+    if not url.endswith("/p"):
+        url = url[: (url.find("/p")) + 2]
+
+    url = re.sub(r"-\d+[gt]b", "", url)
 
     async with aiohttp.ClientSession() as sessao:
         try:
@@ -25,211 +24,128 @@ async def cores_dispositivo(url) -> dict:
             print(f"Request falhou: {e}")
             return {"erro": "Página não encontrada"}
 
+        match = re.search(
+            r"https://shop\.samsung\.com/_v/segment/routing/vtex\.store@2\.x/product/(\d+)/",
+            dados,
+        )
+        try:
+            id = match.group(1)
+        except AttributeError:
+            return {"erro": "Erro ao filtrar características do modelo"}
+
         conteudo = BeautifulSoup(dados, "html.parser")
+        ref = conteudo.find(
+            "strong", class_="samsungbr-app-pdp-2-x-productReferenceId"
+        ).text
+        if not ref:
+            return {"erro": "Erro ao filtrar características do modelo"}
 
-        # Encontra o(s) div(s) com as opções de cores (alguns modelos possuem mais de um)
-        divs_cores = conteudo.find_all("div", {"id": "selector-color"})
+        capacidades_url = f"https://searchapi.samsung.com/v6/front/b2c/product/card/detail/global?siteCode=br&modelList={ref}&commonCodeYN=N&saleSkuYN=N&onlyRequestSkuYN=N&keySummaryYN=Y&shopSiteCode=br"
 
-        for div_cores in divs_cores:
-            div_cores = div_cores.find(
-                "div", class_="samsungbr-app-pdp-2-x-selectorWrapper"
-            )
+        try:
+            async with sessao.get(capacidades_url) as resposta:
+                resposta.raise_for_status()
+                dados = await resposta.json()
+        except aiohttp.ClientError as e:
+            print(f"Request falhou: {e}")
+            return {"erro": "Erro ao filtrar características do modelo"}
 
-            # Encontra todos os botões das opções de cores
-            botoes_cores = div_cores.find_all("button")
+        capacidades = [
+            option["optionCode"]
+            for product in dados["response"]["resultData"]["productList"]
+            for chip_option in product["chipOptions"]
+            if chip_option["fmyChipType"] == "MOBILE MEMORY"
+            for option in chip_option["optionList"]
+        ]
 
-            for botao in botoes_cores:
-                # Se não existe estoque da cor, passe para a próxima opção
-                if botao.find("div", class_="samsungbr-app-pdp-2-x-outOfStock"):
+        for capacidade in capacidades:
+            if capacidades.index(capacidade) != 0:
+                novo_url = f"{url[:-2]}-{capacidade.lower().replace(' ', '')}/p"
+                try:
+                    async with sessao.get(novo_url) as resposta:
+                        resposta.raise_for_status()
+                        dados = await resposta.text()
+                except aiohttp.ClientError as e:
+                    print(f"Request falhou: {e}")
                     continue
-
-                # Encontra o nome da cor e armazena na lista de cores
-                div_nome_cor = botao.find(
-                    "div", class_="samsungbr-app-pdp-2-x-variantName"
+                match = re.search(
+                    r"https://shop\.samsung\.com/_v/segment/routing/vtex\.store@2\.x/product/(\d+)/",
+                    dados,
                 )
-                if div_nome_cor:
-                    cor = div_nome_cor.text.strip()
-                    cores.append(cor)
+                id = match.group(1)
 
-    if not cores:
+            cores_url = f"https://shop.samsung.com/br/api/catalog_system/pub/products/search/?fq=productId:{id}"
+            try:
+                async with sessao.get(cores_url) as resposta:
+                    resposta.raise_for_status()
+                    dados = await resposta.json()
+            except aiohttp.ClientError as e:
+                print(f"Request falhou: {e}")
+                return {"erro": "Erro ao filtrar características do modelo"}
+
+            cores = dict()
+
+            for item in dados[0]["items"]:
+                if item["sellers"][0]["commertialOffer"]["IsAvailable"]:
+                    cores[item["name"]] = item["itemId"]
+
+            if cores:
+                informacoes[capacidade] = dict()
+                informacoes[capacidade]["cores"] = cores
+                informacoes[capacidade]["id"] = id
+
+    if not informacoes:
         return {"erro": "O produto escolhido não está disponível no momento"}
 
-    return {"cores": cores}
+    return informacoes
 
 
-async def checar_imei(imei) -> dict:
-    """Checa IMEI informado pelo usuário, retorna dicionário vazio caso inválido.
-    Retorna um dicionário com informações do dispositivo se validado.
-    """
-
-    url = f"https://shop.samsung.com/br/tradein/trocafone/checkImei/{imei}/true"
-    headers = {
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-    }
-
-    # Caso o formato do IMEI é inválido
-    if not match(pattern=r"^\d{15}$", string=imei):
-        return {}
-
+async def gerar_link(id_modelo, id_capacidade_cor):
     async with aiohttp.ClientSession() as sessao:
+        url = "https://shop.samsung.com/br/api/checkout/pub/orderForm"
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        try:
+            async with sessao.post(url, headers=headers) as resposta:
+                resposta.raise_for_status()
+                dados = await resposta.json()
+        except aiohttp.ClientError as e:
+            print(f"Request para gerar orderFormId falhou: {e}")
+            return None
+        order_form_id = dados.get("orderFormId")
+
+        url = f"https://shop.samsung.com/br/api/checkout/pub/orderForm/{order_form_id}/items"
+        payload = {
+            "orderItems": [{"id": id_capacidade_cor, "quantity": 1, "seller": "1"}]
+        }
+        try:
+            async with sessao.post(url, headers=headers, json=payload) as resposta:
+                resposta.raise_for_status()
+        except aiohttp.ClientError as e:
+            print(f"Request para colocar item no carrinho falhou: {e}")
+            return None
+
+        url = f"https://shop.samsung.com/br/tradein/vtex/getProductGroup/{id_modelo}/{id_capacidade_cor}/MQ=="
         try:
             async with sessao.get(url, headers=headers) as resposta:
                 resposta.raise_for_status()
                 dados = await resposta.json()
         except aiohttp.ClientError as e:
-            print(f"Request falhou: {e}")
-            return {}
+            print(f"Request para pegar marketingTag falhou: {e}")
+            return None
+        marketing_tag = dados[0].get("marketingTag")
 
-    # Caso IMEI não corresponde a um dispositivo ou dispositivo não está disponível para Troca Smart
-    if "is_imei_valid" in dados and not dados["is_imei_valid"]:
-        return {}
-
-    # Cria e preenche set com as capacidades disponíveis do dispositivo
-    capacidades_opcoes = set()
-    for produto in dados["products"]:
-        capacidades_opcoes.add(produto["attributes"]["storage"]["label"])
-
-    # Retorna dicionário com opções de capacidade, marca e modelo do dispositivo
-    return {
-        "capacidades_opcoes": capacidades_opcoes,
-        "marca": dados["brand"]["name"],
-        "modelo": dados["model"]["name"],
-    }
-
-
-async def gerar_link(url, cor, marca, modelo, capacidade, imei) -> dict:
-    """Gera link de carrinho na Samsung Shop com desconto da Troca Smart."""
-
-    async with async_playwright() as p:
-        # Abre um contexto no Chromium no modo headless
-        browser = await p.chromium.launch(chromium_sandbox=False, headless=True)
-        contexto = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            bypass_csp=True,
-            ignore_https_errors=True,
-            java_script_enabled=True,
-        )
-
-        try:
-            # Setar e pegar orderFormId para gerar o link do carrinho
-            pagina = await contexto.new_page()
-            await pagina.goto(
-                "https://shop.samsung.com/br/api/checkout/pub/orderForm?refreshOutdatedData=true",
-                wait_until="domcontentloaded",
-            )
-            conteudo = await pagina.inner_html("pre")
-            order_form_id = loads(conteudo).get("orderFormId")
-
-            pagina = await contexto.new_page()
-
-            # Vai para a página da loja do modelo e cor escolhidos
-            await pagina.goto(url, wait_until="domcontentloaded")
-
-            # Impedir que o request que termina em /shippingData coloque o CEP placeholder no carrinho
-            await pagina.route("**/shippingData", lambda route: route.abort())
-
-            # Scrollar para carregar os elementos
-            await pagina.evaluate("window.scrollTo(0, 1000);")
-
-            # Clicar na cor escolhida
-            await pagina.click(
-                selector=f'.samsungbr-app-pdp-2-x-variantName:has-text("{cor}")'
-            )
-
-            # Clicar no botão de iniciar a Troca Smart
-            # A cada tentativa, interage com a página (scroll) para carregar o botão
-            for i in range(3):
-                try:
-                    await pagina.click(
-                        selector=".samsungbr-samsung-tradein-standalone-1-x-bonusTradeinPdpBtn",
-                        timeout=10000,
-                    )
-                    break
-                except TimeoutError:
-                    await pagina.evaluate(f"window.scrollTo(0, {1000 + i});")
-                    continue
-
-            # Inserir a marca do dispositivo da Troca Smart
-            await pagina.click(selector="#react-select-2-input")
-            await pagina.fill(selector="#react-select-2-input", value=marca)
-            await pagina.press(selector="#react-select-2-input", key="Enter")
-
-            # Inserir o modelo do dispositivo da Troca Smart
-            await pagina.click(selector="#react-select-3-input")
-            await pagina.fill(selector="#react-select-3-input", value=modelo)
-            await pagina.press(selector="#react-select-3-input", key="Enter")
-
-            # Inserir a capacidade do dispositivo da Troca Smart
-            await pagina.click(selector="#react-select-4-input")
-            await pagina.fill(selector="#react-select-4-input", value=capacidade)
-            await pagina.press(selector="#react-select-4-input", key="Enter")
-
-            # Continuar para próxima etapa
-            await pagina.click(
-                selector=".samsungbr-samsung-tradein-standalone-1-x-modalFooterBtn__continue"
-            )
-
-            # Informar que o dispositivo está em boas condições
-            await pagina.click(selector=".aut_tradein_condition_yes")
-
-            # Continuar para próxima etapa
-            await pagina.click(
-                selector=".samsungbr-samsung-tradein-standalone-1-x-modalFooterBtn__continue"
-            )
-
-            # Inserir o IMEI do dispositivo da Troca Smart
-            await pagina.fill(
-                selector=".samsungbr-samsung-tradein-standalone-1-x-checkImeiInput",
-                value=imei,
-            )
-
-            # Esperar a confirmação da validação do IMEI
-            await pagina.wait_for_selector(
-                ".samsungbr-samsung-tradein-standalone-1-x-checkImeiTextValid"
-            )
-
-            # Terminar processo da Troca Smart e voltar para a página da loja
-            await pagina.click(
-                selector=".samsungbr-samsung-tradein-standalone-1-x-modalFooterBtn__continue"
-            )
-
-            # Inserir um CEP placeholder (de SP), apenas para poder completar a compra
-            await pagina.fill(selector="#postal-code", value="01153000")
-            await pagina.press(selector="#postal-code", key="Enter")
-
-            # Escolher a opção de não incluir Samsung Care+
-            await pagina.click(selector='p:has-text("Não incluir Samsung Care+")')
-
-            # Esperar a confirmação do CEP para poder completar a compra
+        if marketing_tag:
+            url = f"https://shop.samsung.com/br/api/checkout/pub/orderForm/{order_form_id}/attachments/marketingData"
+            payload = {"marketingTags": [marketing_tag]}
             try:
-                await pagina.wait_for_selector(
-                    ".samsungbr-app-pdp-2-x-shippingButtonSelectType"
-                )
+                async with sessao.post(url, headers=headers, json=payload) as resposta:
+                    resposta.raise_for_status()
+            except aiohttp.ClientError as e:
+                print(f"Request para colocar marketingTag falhou: {e}")
+                return None
 
-            # Caso o CEP não seja confirmado, não existe estoque para a região do CEP placeholder
-            except TimeoutError:
-                return {"erro": "O produto escolhido não está disponível no momento."}
-
-            # Clicar para comprar o produto
-            await pagina.click(selector="#button-buy-product")
-
-            # Fazer com que todas as operações sejam feitas no mesmo orderFormId
-            nova_pagina = await contexto.new_page()
-            await nova_pagina.goto(
-                "https://shop.samsung.com/br/api/checkout/pub/orderForm?refreshOutdatedData=true",
-                wait_until="domcontentloaded",
-            )
-
-        # Caso algum elemento não seja encontrado na página
-        except TimeoutError:
-            return {"erro": "Houve um erro ao gerar o link."}
-
-        finally:
-            # Fechar browser
-            await contexto.close()
-            await browser.close()
-
-        # Montar e retornar link do carrinho com o orderFormId
-        return {
-            "link": f"https://shop.samsung.com/br/checkout?orderFormId={order_form_id}#/cart"
-        }
+        return f"https://shop.samsung.com/br/checkout?orderFormId={order_form_id}#/cart"

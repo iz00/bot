@@ -24,9 +24,8 @@ Escolha um modelo, uma cor, informe o IMEI e escolha uma capacidade.
 import asyncio, logging, uvicorn
 from modelos import MODELOS
 from utils import (
-    cores_dispositivo,
-    checar_imei,
     gerar_link,
+    informacoes_modelo,
 )
 from asgiref.wsgi import WsgiToAsgi
 from dataclasses import dataclass
@@ -67,11 +66,11 @@ TOKEN = getenv("TOKEN")
 # ID do grupo para restrição de acesso
 GRUPO_ID = getenv("GRUPO_ID")
 
-# Definição das etapas do `ConversationHandler`
-MODELO, LINK, COR, IMEI, CAPACIDADE = range(5)
+# Definição das etapas do ConversationHandler
+MODELO, LINK, CAPACIDADE, COR, QUANTIDADE = range(5)
 
-# Todas as possibilidades de  capacidades para a pattern no `CallbackQueryHandler`
-CAPACIDADES = ["16GB", "32GB", "64GB", "128GB", "256GB", "512GB", "1TB"]
+# Definição das opções de quantidade de links
+QUANTIDADE_LINKS = [1, 2, 3, 5, 10, 15, 20]
 
 
 @dataclass
@@ -164,7 +163,7 @@ async def escolha_link(update: Update, context: CustomContext) -> int:
 
     message = await query.edit_message_text(
         disable_web_page_preview=True,
-        text="Informe o link do dispositivo na Samsung Shop.\nNo formato: https://shop.samsung.com/br/<modelo>/p",
+        text="Informe o link do dispositivo na Samsung Shop.\nNo formato: https://shop.​samsung.​com/br/<modelo>/p.",
     )
 
     # Salva o id da mensagem do bot para ser excluída depois
@@ -173,23 +172,28 @@ async def escolha_link(update: Update, context: CustomContext) -> int:
     return LINK
 
 
-async def escolha_cor(update: Update, context: CustomContext) -> int:
-    """Salva o modelo escolhido e solicita ao usuário escolher uma cor para o modelo."""
+async def escolha_capacidade(update: Update, context: CustomContext) -> int:
+    """Salva o modelo escolhido e solicita ao usuário escolher uma capacidade para o modelo."""
     query = update.callback_query
 
     if query:
         await query.answer()
-        context.user_data["url"] = MODELOS[query.data]
+        url = MODELOS[query.data]
     else:
-        context.user_data["url"] = update.message.text.replace(" ", "")
+        url = update.message.text.replace(" ", "")
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
             message_id=update.message.message_id,
         )
 
-    dispositivo = await cores_dispositivo(context.user_data["url"])
+    await context.bot.delete_message(
+        chat_id=update.effective_chat.id,
+        message_id=context.user_data["bot_message_id"],
+    )
 
-    while "erro" in dispositivo:
+    context.user_data["dispositivo"] = await informacoes_modelo(url)
+
+    while "erro" in context.user_data["dispositivo"]:
         keyboard = [
             *(
                 [InlineKeyboardButton(modelo, callback_data=modelo)]
@@ -200,10 +204,8 @@ async def escolha_cor(update: Update, context: CustomContext) -> int:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         try:
-            message = await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=context.user_data["bot_message_id"],
-                text=f"{dispositivo['erro']}.\nEscolha o modelo:",
+            message = await update.message.reply_text(
+                text=f"{context.user_data['dispositivo']['erro']}.\nEscolha o modelo:",
                 reply_markup=reply_markup,
             )
         except BadRequest:
@@ -213,87 +215,60 @@ async def escolha_cor(update: Update, context: CustomContext) -> int:
 
         return MODELO
 
-    await context.bot.delete_message(
-        chat_id=update.effective_chat.id,
-        message_id=context.user_data["bot_message_id"],
-    )
-
     keyboard = [
-        [InlineKeyboardButton(cor, callback_data=cor)]
-        for cor in sorted(dispositivo["cores"])
+        [InlineKeyboardButton(capacidade, callback_data=capacidade)]
+        for capacidade in context.user_data["dispositivo"].keys()
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Escolha a cor:",
+        text="Escolha a capacidade:",
         reply_markup=reply_markup,
     )
+
+    return CAPACIDADE
+
+
+async def escolha_cor(update: Update, context: CustomContext) -> int:
+    """Salva a capacidade escolhida e solicita ao usuário escolher a cor."""
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data["capacidade"] = query.data
+
+    keyboard = [
+        [InlineKeyboardButton(cor, callback_data=cor)]
+        for cor in sorted(context.user_data["dispositivo"][query.data]["cores"].keys())
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text("Escolha a cor:", reply_markup=reply_markup)
 
     return COR
 
 
-async def escolha_imei(update: Update, context: CustomContext) -> int:
-    """Salva a cor escolhida e solicita ao usuário informar o IMEI do dispositivo a ser utilizado na Troca Smart."""
+async def escolha_quantidade(update: Update, context: CustomContext) -> int:
+    """Salva a cor escolhida e solicita ao usuário escolher uma quantidade de links gerados."""
     query = update.callback_query
     await query.answer()
 
     context.user_data["cor"] = query.data
 
-    message = await query.edit_message_text(
-        "Informe o IMEI do dispositivo a ser utilizado na Troca Smart."
-    )
-
-    # Salva o id da mensagem do bot para ser excluída depois
-    context.user_data["bot_message_id"] = message.message_id
-
-    return IMEI
-
-
-async def escolha_capacidade(update: Update, context: CustomContext) -> int:
-    """Salva o IMEI informado e solicita ao usuário escolher a capacidade do dispositivo a ser utilizado na Troca Smart."""
-    context.user_data["imei"] = update.message.text.replace(" ", "")
-    # Salva o id da mensagem do usuário para ser excluída depois
-    context.user_data["user_message_id"] = update.message.message_id
-
-    dispositivo_imei = await checar_imei(context.user_data["imei"])
-
-    # Caso IMEI não é válido, informa ao usuário e solicita um novo IMEI
-    while not dispositivo_imei:
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data["bot_message_id"],
-            text=f"IMEI {context.user_data['imei']} é inválido.\nInforme o IMEI do dispositivo a ser utilizado na Troca Smart.",
-        )
-        await context.bot.delete_message(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data["user_message_id"],
-        )
-
-        return IMEI
-
-    # Caso IMEI é válido, salva a marca e o modelo do dispositivo correspondente
-    context.user_data["imei_marca"] = dispositivo_imei["marca"]
-    context.user_data["imei_modelo"] = dispositivo_imei["modelo"]
-
     keyboard = [
         [
-            InlineKeyboardButton(capacidade, callback_data=capacidade)
-            for capacidade in sorted(
-                dispositivo_imei["capacidades_opcoes"],
-                key=lambda x: CAPACIDADES.index(x),
-            )
+            InlineKeyboardButton(str(quantidade), callback_data=str(quantidade))
+            for quantidade in QUANTIDADE_LINKS
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        "Escolha a capacidade do dispositivo a ser utilizado na Troca Smart:",
-        reply_markup=reply_markup,
+    await query.edit_message_text(
+        "Quantos links você quer gerar?", reply_markup=reply_markup
     )
 
-    return CAPACIDADE
+    return QUANTIDADE
 
 
 async def envia_link(update: Update, context: CustomContext) -> int:
@@ -301,35 +276,34 @@ async def envia_link(update: Update, context: CustomContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    url = context.user_data["url"]
-    cor = context.user_data["cor"]
-
-    imei = context.user_data["imei"]
-    imei_marca = context.user_data["imei_marca"]
-    imei_modelo = context.user_data["imei_modelo"]
-    imei_capacidade = query.data
+    quantidade = int(query.data)
+    id_modelo = context.user_data["dispositivo"][context.user_data["capacidade"]]["id"]
+    id_capacidade_cor = context.user_data["dispositivo"][
+        context.user_data["capacidade"]
+    ]["cores"][context.user_data["cor"]]
 
     # Deleta as outras mensagens e gera o link
     await context.bot.delete_message(
         chat_id=update.effective_chat.id, message_id=query.message.message_id
     )
 
-    link = await gerar_link(url, cor, imei_marca, imei_modelo, imei_capacidade, imei)
+    for i in range(quantidade):
+        link = await gerar_link(id_modelo, id_capacidade_cor)
 
-    await context.bot.delete_message(
-        update.effective_chat.id, context.user_data["bot_message_id"]
-    )
-    await context.bot.delete_message(
-        update.effective_chat.id, context.user_data["user_message_id"]
-    )
+        # Envia o link do carrinho para o usuário, ou o erro caso ocorra
+        if link:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"Link {i + 1} gerado: {link}",
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Houve um erro ao gerar o link.",
+            )
+            return ConversationHandler.END
 
-    # Envia o link do carrinho para o usuário, ou o erro caso ocorra
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=link["erro"] if "erro" in link else f"Link gerado: {link['link']}",
-    )
-
-    # Termina o `ConversationHandler`
+    # Termina o ConversationHandler
     return ConversationHandler.END
 
 
@@ -372,18 +346,18 @@ async def main() -> None:
             MODELO: [
                 *(
                     CallbackQueryHandler(
-                        escolha_cor, pattern="^" + escape(modelo) + "$"
+                        escolha_capacidade, pattern="^" + escape(modelo) + "$"
                     )
                     for modelo in MODELOS.keys()
                 ),
                 CallbackQueryHandler(escolha_link, pattern="^outro$"),
             ],
-            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_cor)],
-            COR: [CallbackQueryHandler(escolha_imei, pattern="^.*$")],
-            IMEI: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_capacidade)],
-            CAPACIDADE: [
-                CallbackQueryHandler(envia_link, pattern="^" + capacidade + "$")
-                for capacidade in CAPACIDADES
+            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_capacidade)],
+            CAPACIDADE: [CallbackQueryHandler(escolha_cor, pattern="^.*$")],
+            COR: [CallbackQueryHandler(escolha_quantidade, pattern="^.*$")],
+            QUANTIDADE: [
+                CallbackQueryHandler(envia_link, pattern="^" + str(quantidade) + "$")
+                for quantidade in QUANTIDADE_LINKS
             ],
         },
         fallbacks=[CommandHandler("gerar", escolha_modelo)],
