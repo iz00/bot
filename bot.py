@@ -213,7 +213,8 @@ async def escolha_capacidade(update: Update, context: CustomContext) -> int:
         ]
 
         # Informa erro ao usuário e solicita escolha de modelo novamente
-        message = await update.message.reply_text(
+        message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
             text=f"{context.user_data['dispositivo']['erro']}.\nEscolha o modelo:",
             reply_markup=InlineKeyboardMarkup(teclado),
         )
@@ -290,9 +291,9 @@ async def envia_link(update: Update, context: CustomContext) -> int:
 
     # Pega ID do modelo e ID específico da cor no dicionário `dispositivo`
     id_modelo = context.user_data["dispositivo"][context.user_data["capacidade"]]["id"]
-    id_cor = context.user_data["dispositivo"][
-        context.user_data["capacidade"]
-    ]["cores"][context.user_data["cor"]]
+    id_cor = context.user_data["dispositivo"][context.user_data["capacidade"]]["cores"][
+        context.user_data["cor"]
+    ]
 
     # Deleta a última mensagem do bot
     await context.bot.delete_message(

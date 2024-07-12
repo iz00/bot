@@ -46,8 +46,8 @@ async def informacoes_modelo(url: str) -> dict:
         )
         try:
             id = procura.group(1)
-        except AttributeError:
-            print(f"ID do modelo {url} não foi encontrado.")
+        except AttributeError as e:
+            print(f"ID do modelo {url} não foi encontrado. Erro: {e}")
             return {"erro": "Erro ao filtrar características do modelo"}
 
         # Pegar referenceId do modelo no HTML da página
@@ -73,13 +73,17 @@ async def informacoes_modelo(url: str) -> dict:
             return {"erro": "Erro ao filtrar características do modelo"}
 
         # Extrair as capacidades da resposta
-        capacidades = [
-            opcao["optionCode"]
-            for produto in dados["response"]["resultData"]["productList"]
-            for opcao_chip in produto["chipOptions"]
-            if opcao_chip["fmyChipType"] == "MOBILE MEMORY"
-            for opcao in opcao_chip["optionList"]
-        ]
+        try:
+            capacidades = [
+                opcao["optionCode"]
+                for produto in dados["response"]["resultData"]["productList"]
+                for opcao_chip in produto["chipOptions"]
+                if opcao_chip["fmyChipType"] == "MOBILE MEMORY"
+                for opcao in opcao_chip["optionList"]
+            ]
+        except (KeyError, TypeError) as e:
+            print(f"Capacidades do modelo {ref} não foram encontradas. Erro: {e}")
+            return {"erro": "Erro ao filtrar características do modelo"}
 
         for capacidade in capacidades:
 
@@ -105,9 +109,9 @@ async def informacoes_modelo(url: str) -> dict:
                 )
                 try:
                     id = procura.group(1)
-                except AttributeError:
+                except AttributeError as e:
                     print(
-                        f"ID do modelo {url_especifico_capacidade} não foi encontrado."
+                        f"ID do modelo {url_especifico_capacidade} não foi encontrado. Erro: {e}"
                     )
                     continue
 
@@ -122,14 +126,18 @@ async def informacoes_modelo(url: str) -> dict:
                 print(
                     f"Requisição GET para pegar as cores do modelo de ID {id} falhou: {e}"
                 )
-                return {"erro": "Erro ao filtrar características do modelo"}
+                continue
 
             cores = dict()
 
             # Extrair o nome da cor e o seu ID da resposta, apenas se a cor possui estoque
-            for item in dados[0]["items"]:
-                if item["sellers"][0]["commertialOffer"]["IsAvailable"]:
-                    cores[item["name"]] = item["itemId"]
+            try:
+                for item in dados[0]["items"]:
+                    if item["sellers"][0]["commertialOffer"]["IsAvailable"]:
+                        cores[item["name"]] = item["itemId"]
+            except (IndexError, KeyError, TypeError) as e:
+                print(f"Cores do modelo de ID {id} não foram encontradas. Erro: {e}")
+                continue
 
             # Se existe alguma cor com estoque para a capacidade, atualize o dicionário `informacoes`
             if cores:
@@ -204,7 +212,13 @@ async def gerar_link(id_modelo: str | int, id_cor: str | int) -> str:
             return None
 
         # Pegar marketingTag da resposta
-        marketing_tag = dados[0].get("marketingTag")
+        try:
+            marketing_tag = dados[0].get("marketingTag")
+        except (IndexError, TypeError) as e:
+            print(
+                f"marketingTag do modelo de ID {id_modelo} não foi encontrada. Erro: {e}"
+            )
+            marketing_tag = None
 
         # Se o modelo não possui marketingTag, não oferece Vale Mais - Troca Smart
         if marketing_tag:
