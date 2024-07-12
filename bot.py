@@ -1,24 +1,24 @@
 #!/usr/bin/env python
 
 """
-Telegram bot que gera links para o carrinho da loja da Samsung com um produto escolhido e desconto da Troca Smart.
+Telegram bot que gera links para o carrinho da loja da Samsung com um produto escolhido e desconto do Vale Mais - Troca Smart.\n
 
-A comunicação do bot ocorre através de webhook com Flask.
-O bot funciona através do `ConversationHandler`, que define a ordem de algumas callback functions.
-A ordem das funções, definida nas etapas (`states`), pede ao usuário escolher o modelo e a cor do produto escolhido,
-o IMEI do dispositivo a ser utilizado na Troca Smart e sua capacidade de armazenamento.
-Os modelos e suas cores são filtrados com web scraping com BeautifulSoup,
-para serem apresentados nos botões para os usuários apenas se estão com estoque.
-Os botões funcionam através de `InlineKeyboard`.
-O link é gerado com automação de browser com Playwright, no Chromium.
+A comunicação do bot ocorre através de webhook com Flask, com base no [exemplo da documentação](https://docs.python-telegram-bot.org/en/v21.3/examples.customwebhookbot.html).\n
+O bot funciona através do `ConversationHandler`, que define a ordem de algumas funções callback.\n
+A ordem das funções, definida nas etapas (`states`), pede ao usuário escolher o modelo, opcionalmente informar o link do modelo,
+a capacidade e a cor do modelo escolhido, e por fim a quantidade de links a serem gerados.\n
+Os botões funcionam através de `InlineKeyboard`.\n
+Os modelos apresentados nos botões para o usuário são armazenados no dicionário `MODELOS`.
+As opções de capacidades e de cores do modelo são filtradas e apresentadas nos botões para o usuário apenas se estão com estoque.\n
+Os links são gerados com o modelo e o desconto do Vale Mais - Troca Smart nos carrinhos.
 
 Uso:
-O bot solicita informações sobre um produto através de `InlineKeyboard` com múltiplos `CallbackQueryHandlers` 
-organizados em um `ConversationHandler`, e também solicita informações do dispositivo da Troca Smart.
-Com essas informações o bot gera o link do carrinho com o produto e o desconto.
+O bot solicita informações sobre um modelo da Samsung Shop através de `InlineKeyboard`
+com múltiplos `CallbackQueryHandlers` organizados em um `ConversationHandler`.
+Com essas informações o bot gera o link do carrinho com o modelo e o desconto.
 Envie /start para informações de como utilizar.
 Envie /gerar para iniciar o processo de geração do link.
-Escolha um modelo, uma cor, informe o IMEI e escolha uma capacidade.
+Escolha um modelo (opcionalmente informe o link), a capacidade, a cor, e a quantidade de links.
 """
 
 import asyncio, logging, uvicorn
@@ -35,13 +35,13 @@ from os import getenv
 from re import escape
 from telegram import ChatMember, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.error import TelegramError, BadRequest
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackContext,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    CallbackQueryHandler,
     ConversationHandler,
     ExtBot,
     MessageHandler,
@@ -60,7 +60,7 @@ URL = getenv("URL")
 PORT = int(getenv("PORT"))
 
 # ID do chat do admin no Telegram e TOKEN do bot gerado pelo BotFather
-ADMIN_CHAT_ID = int(getenv("ADMIN_CHAT_ID"))
+ADMIN_CHAT_ID = getenv("ADMIN_CHAT_ID")
 TOKEN = getenv("TOKEN")
 
 # ID do grupo para restrição de acesso
@@ -99,12 +99,12 @@ def restringir_acesso(func):
     """Restringir acesso aos comandos do bot apenas a usuários em determinado grupo."""
 
     async def wrapper(update: Update, context: CustomContext, *args, **kwargs):
-        user_id = update.effective_user.id
+        usuario_id = update.effective_user.id
 
         # Tenta pegar o `ChatMember` do usuário no grupo
         try:
             membro = await context.bot.get_chat_member(
-                chat_id=GRUPO_ID, user_id=user_id
+                chat_id=GRUPO_ID, user_id=usuario_id
             )
         except TelegramError:
             pass
@@ -118,7 +118,7 @@ def restringir_acesso(func):
             ]:
                 return await func(update, context, *args, **kwargs)
 
-        # Se usuário no grupo não foi encontrado (nunca esteve lá ou saiu)
+        # Caso usuário não foi encontrado no grupo (nunca esteve lá ou saiu)
         await update.message.reply_text(
             "Desculpe, você não tem permissão para usar este bot."
         )
@@ -137,158 +137,170 @@ async def start(update: Update, context: CustomContext) -> None:
 @restringir_acesso
 async def escolha_modelo(update: Update, context: CustomContext) -> int:
     """Inicia o `ConversationHandler` e solicita ao usuário escolher um modelo."""
-    keyboard = [
+    # Monta botões com as opções de modelos do dicionário `MODELOS` e uma opção Outro
+    teclado = [
         *(
-            [InlineKeyboardButton(modelo, callback_data=modelo)]
+            [InlineKeyboardButton(text=modelo, callback_data=modelo)]
             for modelo in MODELOS.keys()
         ),
-        [InlineKeyboardButton("Outro", callback_data="outro")],
+        [InlineKeyboardButton(text="Outro", callback_data="outro")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    message = await update.message.reply_text(
-        "Escolha o modelo:", reply_markup=reply_markup
+    mensagem = await update.message.reply_text(
+        text="Escolha o modelo:", reply_markup=InlineKeyboardMarkup(teclado)
     )
 
-    # Salva o id da mensagem do bot para ser excluída depois
-    context.user_data["bot_message_id"] = message.message_id
+    # Salva o ID da mensagem do bot para ser excluída depois
+    context.user_data["mensagem_bot_id"] = mensagem.message_id
 
     return MODELO
 
 
-async def escolha_link(update: Update, context: CustomContext) -> int:
+async def informa_link(update: Update, context: CustomContext) -> int:
     """Solicita ao usuário informar o link do modelo na Samsung Shop."""
     query = update.callback_query
     await query.answer()
 
-    message = await query.edit_message_text(
-        disable_web_page_preview=True,
+    # Para não ser destacado na mensagem, o link de exemplo na verdade está com dois caracteres escondidos
+    # `https://shop.U+200B​samsung.U+200B​com/br/<modelo>/p`
+    mensagem = await query.edit_message_text(
         text="Informe o link do dispositivo na Samsung Shop.\nNo formato: https://shop.​samsung.​com/br/<modelo>/p.",
+        disable_web_page_preview=True,
     )
 
-    # Salva o id da mensagem do bot para ser excluída depois
-    context.user_data["bot_message_id"] = message.message_id
+    # Salva o ID da mensagem do bot para ser excluída depois
+    context.user_data["mensagem_bot_id"] = mensagem.message_id
 
     return LINK
 
 
 async def escolha_capacidade(update: Update, context: CustomContext) -> int:
-    """Salva o modelo escolhido e solicita ao usuário escolher uma capacidade para o modelo."""
+    """Salva o modelo escolhido e solicita ao usuário escolher a capacidade do modelo."""
     query = update.callback_query
 
+    # Se existe uma query, o usuário escolheu o modelo em um dos botões
     if query:
         await query.answer()
+        # Pega URL do dicionário `MODELOS` através do nome do modelo escolhido
         url = MODELOS[query.data]
+
+    # Se não existe uma query, o usuário informou o URL do modelo
     else:
-        url = update.message.text.replace(" ", "")
+        url = update.message.text.replace(" ", "").lower()
+        # Deleta a mensagem do usuário (o URL informado)
         await context.bot.delete_message(
             chat_id=update.effective_chat.id,
             message_id=update.message.message_id,
         )
 
+    # Deleta a última mensagem do bot (opções de modelos ou solicitação do link)
     await context.bot.delete_message(
         chat_id=update.effective_chat.id,
-        message_id=context.user_data["bot_message_id"],
+        message_id=context.user_data["mensagem_bot_id"],
     )
 
     context.user_data["dispositivo"] = await informacoes_modelo(url)
 
-    while "erro" in context.user_data["dispositivo"]:
-        keyboard = [
+    # Caso ocorra erro na função de pegar as informações do modelo
+    if "erro" in context.user_data["dispositivo"]:
+        # Refaz teclado com as opções de modelos
+        teclado = [
             *(
-                [InlineKeyboardButton(modelo, callback_data=modelo)]
+                [InlineKeyboardButton(text=modelo, callback_data=modelo)]
                 for modelo in MODELOS.keys()
             ),
-            [InlineKeyboardButton("Outro", callback_data="outro")],
+            [InlineKeyboardButton(text="Outro", callback_data="outro")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        try:
-            message = await update.message.reply_text(
-                text=f"{context.user_data['dispositivo']['erro']}.\nEscolha o modelo:",
-                reply_markup=reply_markup,
-            )
-        except BadRequest:
-            pass
-        else:
-            context.user_data["bot_message_id"] = message.message_id
+        # Informa erro ao usuário e solicita escolha de modelo novamente
+        message = await update.message.reply_text(
+            text=f"{context.user_data['dispositivo']['erro']}.\nEscolha o modelo:",
+            reply_markup=InlineKeyboardMarkup(teclado),
+        )
+
+        # Salva o ID da mensagem do bot para ser excluída depois
+        context.user_data["mensagem_bot_id"] = message.message_id
 
         return MODELO
 
-    keyboard = [
-        [InlineKeyboardButton(capacidade, callback_data=capacidade)]
+    # Monta botões com as opções de capacidades do modelo escolhido
+    teclado = [
+        [InlineKeyboardButton(text=capacidade, callback_data=capacidade)]
         for capacidade in context.user_data["dispositivo"].keys()
     ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Escolha a capacidade:",
-        reply_markup=reply_markup,
+        reply_markup=InlineKeyboardMarkup(teclado),
     )
 
     return CAPACIDADE
 
 
 async def escolha_cor(update: Update, context: CustomContext) -> int:
-    """Salva a capacidade escolhida e solicita ao usuário escolher a cor."""
+    """Salva a capacidade escolhida e solicita ao usuário escolher a cor do modelo."""
     query = update.callback_query
     await query.answer()
 
     context.user_data["capacidade"] = query.data
 
-    keyboard = [
-        [InlineKeyboardButton(cor, callback_data=cor)]
+    # Monta botões com as opções de cores do modelo e da capacidade escolhidos
+    teclado = [
+        [InlineKeyboardButton(text=cor, callback_data=cor)]
         for cor in sorted(context.user_data["dispositivo"][query.data]["cores"].keys())
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text("Escolha a cor:", reply_markup=reply_markup)
+    await query.edit_message_text(
+        text="Escolha a cor:", reply_markup=InlineKeyboardMarkup(teclado)
+    )
 
     return COR
 
 
 async def escolha_quantidade(update: Update, context: CustomContext) -> int:
-    """Salva a cor escolhida e solicita ao usuário escolher uma quantidade de links gerados."""
+    """Salva a cor escolhida e solicita ao usuário escolher uma quantidade de links a seren gerados."""
     query = update.callback_query
     await query.answer()
 
     context.user_data["cor"] = query.data
 
-    keyboard = [
+    # Monta botões com as opções de quantidade de links a serem gerados
+    teclado = [
         [
-            InlineKeyboardButton(str(quantidade), callback_data=str(quantidade))
+            InlineKeyboardButton(text=str(quantidade), callback_data=str(quantidade))
             for quantidade in QUANTIDADE_LINKS
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
-        "Quantos links você quer gerar?", reply_markup=reply_markup
+        text="Quantos links você quer gerar?",
+        reply_markup=InlineKeyboardMarkup(teclado),
     )
 
     return QUANTIDADE
 
 
 async def envia_link(update: Update, context: CustomContext) -> int:
-    """Gera e envia ao usuário o link para o carrinho com o modelo e o desconto da Troca Smart."""
+    """Gera e envia ao usuário os links para o carrinho com o modelo e o desconto do Vale Mais - Troca Smart."""
     query = update.callback_query
     await query.answer()
 
     quantidade = int(query.data)
+
+    # Pega ID do modelo e ID específico da cor no dicionário `dispositivo`
     id_modelo = context.user_data["dispositivo"][context.user_data["capacidade"]]["id"]
-    id_capacidade_cor = context.user_data["dispositivo"][
+    id_cor = context.user_data["dispositivo"][
         context.user_data["capacidade"]
     ]["cores"][context.user_data["cor"]]
 
-    # Deleta as outras mensagens e gera o link
+    # Deleta a última mensagem do bot
     await context.bot.delete_message(
         chat_id=update.effective_chat.id, message_id=query.message.message_id
     )
 
     for i in range(quantidade):
-        link = await gerar_link(id_modelo, id_capacidade_cor)
+        link = await gerar_link(id_modelo, id_cor)
 
         # Envia o link do carrinho para o usuário, ou o erro caso ocorra
         if link:
@@ -338,7 +350,7 @@ async def main() -> None:
         .build()
     )
 
-    # Setup do `ConversationHandler` com as etapas (`states`)
+    # Configurar `ConversationHandler` com as etapas (`states`)
     # Cada handler é associado a uma interação do usuário em resposta às solicitações do bot
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("gerar", escolha_modelo)],
@@ -350,7 +362,7 @@ async def main() -> None:
                     )
                     for modelo in MODELOS.keys()
                 ),
-                CallbackQueryHandler(escolha_link, pattern="^outro$"),
+                CallbackQueryHandler(informa_link, pattern="^outro$"),
             ],
             LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, escolha_capacidade)],
             CAPACIDADE: [CallbackQueryHandler(escolha_cor, pattern="^.*$")],
