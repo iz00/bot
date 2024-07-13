@@ -85,24 +85,58 @@ async def informacoes_modelo(url: str) -> dict:
             print(f"Capacidades do modelo {ref} não foram encontradas. Erro: {e}")
             return {"erro": "Erro ao filtrar características do modelo"}
 
+        # URL da API para pegar a capacidade padrão do modelo através do ID
+        # A capacidade padrão é a do URL do modelo que não especifica a capacidade
+        capacidade_padrao_url = f"https://shop.samsung.com/br/api/catalog_system/pub/products/search/?fq=productId:{id}"
+        # Requisição GET para pegar a capacidade padrão do modelo
+        try:
+            async with sessao.get(capacidade_padrao_url) as resposta:
+                resposta.raise_for_status()
+                dados_capacidade_padrao = await resposta.json()
+        except aiohttp.ClientError as e:
+            print(
+                f"Requisição GET para pegar a capacidade padrão do modelo de ID {id} falhou: {e}"
+            )
+            return {"erro": "Erro ao filtrar características do modelo"}
+
+        # Extrair a capacidade padrão da resposta
+        try:
+            # Caso a capacidade esteja sucedida de um (*)
+            capacidade_padrao = dados_capacidade_padrao[0]["INTERNAL_MEMORY"][0].replace("(*)", "")
+            # Caso a capacidade esteja sem um espaço separando o valor e a medida
+            capacidade_padrao = re.sub(r'^(\d+)(GB|TB)$', r'\1 \2', capacidade_padrao)
+        except (IndexError, KeyError, TypeError) as e:
+            print(f"Capacidade padrão do modelo de ID {id} não foi encontrada. Erro: {e}")
+            return {"erro": "Erro ao filtrar características do modelo"}
+
+        # Se nenhuma outra capacidade foi encontrada, o modelo apenas oferece a capacidade padrão
+        if not capacidades:
+            capacidades.append(capacidade_padrao)
+
         for capacidade in capacidades:
 
-            # Apenas pegar o ID das outras capacidades, porque da menor (primeira) o ID já foi extraído
-            if capacidades.index(capacidade) != 0:
+            # Se for a capacidade padrão, os dados para extrair as cores já estão disponíveis
+            if capacidade == capacidade_padrao:
+                dados = dados_capacidade_padrao
+
+            # Se for outra capacidade, os dados para extrair as cores precisam ser requisitados
+            else:
                 # Alterar formato do URL para corresponder à capacidade
-                url_especifico_capacidade = (
+                url_capacidade = (
                     f"{url[:-2]}-{capacidade.lower().replace(' ', '')}/p"
                 )
+                # Requisição GET para pegar HTML do URL específico da capacidade
                 try:
-                    async with sessao.get(url_especifico_capacidade) as resposta:
+                    async with sessao.get(url_capacidade) as resposta:
                         resposta.raise_for_status()
                         dados = await resposta.text()
                 except aiohttp.ClientError as e:
                     print(
-                        f"Requisição GET para pegar HTML do URL {url_especifico_capacidade} falhou: {e}"
+                        f"Requisição GET para pegar HTML do URL {url_capacidade} falhou: {e}"
                     )
                     continue
 
+                # Pegar ID do modelo com essa capacidade no HTML da página
                 procura = re.search(
                     r"https://shop\.samsung\.com/_v/segment/routing/vtex\.store@2\.x/product/(\d+)/",
                     dados,
@@ -111,22 +145,22 @@ async def informacoes_modelo(url: str) -> dict:
                     id = procura.group(1)
                 except AttributeError as e:
                     print(
-                        f"ID do modelo {url_especifico_capacidade} não foi encontrado. Erro: {e}"
+                        f"ID do modelo {url_capacidade} não foi encontrado. Erro: {e}"
                     )
                     continue
 
-            # URL da API para pegar as cores disponíveis para o modelo e a capacidade através do ID
-            cores_url = f"https://shop.samsung.com/br/api/catalog_system/pub/products/search/?fq=productId:{id}"
-            # Requisição GET para pegar as cores disponíveis para o modelo e a capacidade
-            try:
-                async with sessao.get(cores_url) as resposta:
-                    resposta.raise_for_status()
-                    dados = await resposta.json()
-            except aiohttp.ClientError as e:
-                print(
-                    f"Requisição GET para pegar as cores do modelo de ID {id} falhou: {e}"
-                )
-                continue
+                # URL da API para pegar as cores disponíveis para o modelo e a capacidade através do ID
+                cores_url = f"https://shop.samsung.com/br/api/catalog_system/pub/products/search/?fq=productId:{id}"
+                # Requisição GET para pegar as cores disponíveis para o modelo e a capacidade
+                try:
+                    async with sessao.get(cores_url) as resposta:
+                        resposta.raise_for_status()
+                        dados = await resposta.json()
+                except aiohttp.ClientError as e:
+                    print(
+                        f"Requisição GET para pegar as cores do modelo de ID {id} falhou: {e}"
+                    )
+                    continue
 
             cores = dict()
 
