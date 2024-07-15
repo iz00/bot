@@ -153,12 +153,12 @@ O processo de escolha do modelo e seus parâmetros, até o envio dos links, é i
 
 1. `entry_point` (*não é exatamente um state, dá início ao `ConversationHandler`*): Através do uso do comando `/gerar`, executa a função `escolha_modelo`, que apresenta ao usuário uma lista de `InlineKeyboardButton`s em um `InlineKeyboard`, cada um correspondente a um modelo do dicionário `MODELOS`, além de uma `InlineKeyboardButton` extra "Outro".
 2. `MODELO`:
-    - Através da escolha de algum dos `InlineKeyboardButton`s correspondentes a um modelo do `MODELOS`, executa a função `escolha_capacidade`, que executa a função `informacoes_modelo`
+    - Através da escolha de algum dos `InlineKeyboardButton`s correspondentes a um modelo do `MODELOS`, executa a função `escolha_capacidade`, que executa a função `informacoes_modelo` com o URL do modelo escolhido, caso a função retorne erro, informa o usuário e repete a solitação do `entry_point`, caso a função retorne as informações, apresenta ao usuário uma lista de `InlineKeyboardButton`s em um `InlineKeyboard`, cada um correspondente a uma capacidade do modelo escolhido.
     - Através da escolha do `InlineKeyboardButton` extra "Outro", executa a função `informa_link`, que solicita ao usuário digitar o link do URL do modelo desejado na Samsung Shop.
-4. `LINK` (*opcional*):
-5. `CAPACIDADE`:
-6. `COR`:
-7. `QUANTIDADE`:
+4. `LINK` (*opcional*): Através do envio de uma mensagem com quaisquer caracteres, executa a função `escolha_capacidade`, mas o URL de parâmetro para executar a função `informacoes_modelo` é o conteúdo da mensagem.
+5. `CAPACIDADE`: Através da escolha de algum dos `InlineKeyboardButton`s das capacidades, executa a função `escolha_cor`, que apresenta ao usuário uma lista de `InlineKeyboardButton`s em um `InlineKeyboard`, cada um correspondente a uma cor do modelo e da capacidade escolhidos.
+6. `COR`: Através da escolha de algum dos `InlineKeyboardButton`s das cores, executa a função `escolha_quantidade`, que apresenta ao usuário uma lista de `InlineKeyboardButton`s em um `InlineKeyboard`, cada um correspondente a uma quantidade da lista `QUANTIDADE_LINKS`.
+7. `QUANTIDADE`: Através da escolha de algum dos `InlineKeyboardButton`s correspondentes a uma quantidade da lista `QUANTIDADE_LINKS`, executa a função `envia_link`, que determina as informações necessárias e gera e envia a quantidade escolhida de links. Caso um erro ocorra ao gerar um link, o envio é interrompido. Termina o `ConversationHandler`.
 
 As informações de escolhas do usuário e do modelo são, durante a execução das funções correspondentes no `ConversationHandler`, armazenadas no `context.user_data`.
 
