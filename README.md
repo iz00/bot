@@ -141,7 +141,28 @@ https://shop.samsung.com/br/api/checkout/pub/orderForm/<order_form_id>/attachmen
 
 ### [`bot.py`](https://github.com/iz00/bot/blob/main/bot.py)
 
+Código do bot do Telegram e do webserver.
 
+Utiliza os módulos: `python-telegram-bot` para utilizar a `Telegram Bot API`, `Flask` e `uvicorn` para a configuração do webhook do bot.
+
+A comunicação do bot ocorre através de [webhook](https://core.telegram.org/bots/api#setwebhook) com `Flask`, com base no [exemplo da documentação](https://docs.python-telegram-bot.org/en/v21.4/examples.customwebhookbot.html) do `python-telegram-bot`.
+
+A restrição de acesso ao bot é implementada através do wrapper `restringir_acesso`, que checa o status do usuário no grupo, através do método `get_chat_member`, com o ID do grupo e o ID do usuário que tentou utilizar o bot. O wrapper é aplicado às funções associadas aos `Handler`s dos comandos `/start` e `/gerar`.
+
+O processo de escolha do modelo e seus parâmetros, até o envio dos links, é implementado através de um `ConversationHandler`, que utiliza `InlineKeyboard`s e `CallbackQueryHandler`s, baseado no [exemplo da documentação](https://docs.python-telegram-bot.org/en/v21.4/examples.inlinekeyboard2.html) do `python-telegram-bot`. O `ConversationHandler` possui as etapas:
+
+1. `entry_point` (*não é exatamente um state, dá início ao `ConversationHandler`*): Através do uso do comando `/gerar`, executa a função `escolha_modelo`, que apresenta ao usuário uma lista de `InlineKeyboardButton`s em um `InlineKeyboard`, cada um correspondente a um modelo do dicionário `MODELOS`, além de uma `InlineKeyboardButton` extra "Outro".
+2. `MODELO`:
+    - Através da escolha de algum dos `InlineKeyboardButton`s correspondentes a um modelo do `MODELOS`, executa a função `escolha_capacidade`, que executa a função `informacoes_modelo`
+    - Através da escolha do `InlineKeyboardButton` extra "Outro", executa a função `informa_link`, que solicita ao usuário digitar o link do URL do modelo desejado na Samsung Shop.
+4. `LINK` (*opcional*):
+5. `CAPACIDADE`:
+6. `COR`:
+7. `QUANTIDADE`:
+
+As informações de escolhas do usuário e do modelo são, durante a execução das funções correspondentes no `ConversationHandler`, armazenadas no `context.user_data`.
+
+Constantemente mensagens são apagadas com `context.bot.delete_message`, isso tem o objetivo de limpar o chat, deixando apenas a mensagem do usuário com o comando `/gerar` e os links enviados pelo bot.
 
 <hr>
 
