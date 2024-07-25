@@ -26,7 +26,7 @@ async def informacoes_modelo(url: str) -> dict:
     if not url.endswith("/p"):
         url = url[: (url.find("/p")) + 2]
 
-    # Retirar especificação de capacidade do URL, para que o primeiro ID seja o da menor capacidade
+    # Retirar especificação de capacidade do URL, para que o primeiro ID seja o da capacidade padrão
     url = re.sub(r"-\d+[gt]b", "", url)
 
     async with aiohttp.ClientSession() as sessao:
